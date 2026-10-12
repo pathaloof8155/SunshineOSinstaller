@@ -1,0 +1,28 @@
+name: Build Install.exe
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pyinstaller cryptography
+
+      - name: Build Install.exe
+        run: pyinstaller --onefile --noconsole --uac-admin --name Install install.py
+
+      - name: Upload Install.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: Install-exe
+          path: dist/Install.exe
