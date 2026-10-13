@@ -1,6 +1,6 @@
 """Sunshine OS Developer Kit - Installer (Tkinter). Build: see README.MD"""
 import base64, json, os, subprocess, sys, threading, datetime, tkinter as tk
-from tkinter import ttk, simpledialog, messagebox
+from tkinter import ttk, messagebox
 from pathlib import Path
 
 BASE = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
@@ -13,30 +13,38 @@ WSL_BAT = SETUP / "silent_wsl_cubic.bat"
 UNINSTALL = DATA / "uninstall_emulator.cmd"   # creato da install_emulator()
 TASK = "SunshineDevKitTrialCheck"
 
-# ---------- credenziali (file cifrato con password) ----------
+# ---------- credenziali (leggibili da tutti, ma firmate) ----------
+# Credentials.env si legge SENZA password. Una firma digitale (Ed25519) in fondo al
+# file garantisce che non sia stato modificato. La password serve solo per firmare
+# una nuova versione, con credentials_tool.py.
+# Incolla qui la chiave pubblica stampata da: python credentials_tool.py keygen
+PUBLIC_KEY = ""   # es. "k3J...=" (base64)
+
+SIG_PREFIX = "#signature="
+
+def _canonical(text):
+    lines = [l.rstrip() for l in text.splitlines() if not l.startswith(SIG_PREFIX)]
+    return "\n".join(lines).strip().encode("utf-8")
+
 def load_credentials():
-    raw = (FILES / "Credentials.env").read_bytes()
-    if raw.startswith(b"gAAAA"):                      # cifrato (Fernet)
-        from cryptography.fernet import Fernet, InvalidToken
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-        for _ in range(3):
-            pw = simpledialog.askstring("Password", "Password di Credentials.env:", show="*")
-            if pw is None:
-                break
-            kdf = PBKDF2HMAC(hashes.SHA256(), 32, b"sunshine-devkit", 480000)
-            key = base64.urlsafe_b64encode(kdf.derive(pw.encode()))
-            try:
-                raw = Fernet(key).decrypt(raw); break
-            except InvalidToken:
-                messagebox.showerror("Errore", "Password errata")
-        else:
-            raise SystemExit
-        if raw.startswith(b"gAAAA"):
-            raise SystemExit
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    try:
+        text = (FILES / "Credentials.env").read_text(encoding="utf-8-sig")
+    except OSError:
+        messagebox.showerror("Errore", "Credentials.env non trovato in .Files"); raise SystemExit
+    if not PUBLIC_KEY:
+        messagebox.showerror("Errore", "Chiave pubblica non impostata in install.py"); raise SystemExit
+    sig = next((l[len(SIG_PREFIX):].strip() for l in text.splitlines() if l.startswith(SIG_PREFIX)), None)
+    try:
+        if not sig: raise InvalidSignature
+        Ed25519PublicKey.from_public_bytes(base64.b64decode(PUBLIC_KEY)).verify(
+            base64.b64decode(sig), _canonical(text))
+    except (InvalidSignature, ValueError):
+        messagebox.showerror("Errore", "Credentials.env non valido o modificato."); raise SystemExit
     cfg = {}
-    for line in raw.decode().splitlines():
-        if "=" in line and not line.strip().startswith("#"):
+    for line in text.splitlines():
+        if "=" in line and not line.startswith("#"):
             k, v = line.split("=", 1); cfg[k.strip()] = v.strip()
     return cfg
 
@@ -86,7 +94,6 @@ class App(tk.Tk):
         self.title("Sunshine OS Developer Kit"); self.geometry("560x420"); self.resizable(False, False)
         self.cfg = cfg
         self.total = int(cfg.get("TrialDays", 3))
-        STATE_DATA = json.loads(STATE.read_text()) if STATE.exists() else {}
         trial_days_left(self.total)
         d = json.loads(STATE.read_text()); d["total"] = self.total; STATE.write_text(json.dumps(d))
         self.left = trial_days_left(self.total)
